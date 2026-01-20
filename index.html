@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shorenet Forensic Evidence Validator</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <header>
+        <h1>Shorenet Forensic Evidence Validator</h1>
+        <p class="subtitle">Independently verify network capture evidence</p>
+    </header>
+
+    <main>
+        <section id="upload-section">
+            <div class="input-grid">
+                <div class="upload-area" id="drop-zone">
+                    <div class="upload-icon">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="17 8 12 3 7 8"/>
+                            <line x1="12" y1="3" x2="12" y2="15"/>
+                        </svg>
+                    </div>
+                    <p>Drop JSON file here</p>
+                    <p class="upload-hint">or click to select</p>
+                    <input type="file" id="file-input" accept=".json" hidden>
+                </div>
+
+                <div class="paste-area">
+                    <textarea id="paste-input" placeholder="Or paste forensic evidence JSON here..."></textarea>
+                    <button id="validate-paste-btn" class="btn-primary">Validate</button>
+                </div>
+            </div>
+        </section>
+
+        <section id="validation-section" class="hidden">
+            <div class="progress-container">
+                <div class="progress-bar" id="progress-bar"></div>
+            </div>
+            <div id="status-text">Validating...</div>
+        </section>
+
+        <section id="results-section" class="hidden">
+            <div class="results-header">
+                <h2 id="results-title">Validation Results</h2>
+                <span id="results-badge" class="badge"></span>
+            </div>
+
+            <div class="result-card" id="hash-verification">
+                <h3>Hash Chain Verification</h3>
+                <div class="result-content"></div>
+            </div>
+
+            <div class="result-card" id="tls-decryption">
+                <h3>TLS Decryption</h3>
+                <div class="result-content"></div>
+            </div>
+
+            <div class="result-card" id="protocol-parsing">
+                <h3>Protocol Parsing</h3>
+                <div class="result-content"></div>
+            </div>
+
+            <div class="result-card" id="content-verification">
+                <h3>Content Verification</h3>
+                <div class="result-content"></div>
+            </div>
+
+            <div class="result-card hidden" id="websocket-messages">
+                <h3>WebSocket Message</h3>
+                <div class="result-content"></div>
+            </div>
+
+            <div class="result-card" id="transaction-details">
+                <h3>Transaction Details</h3>
+                <div class="result-content"></div>
+            </div>
+
+            <button id="reset-btn" class="btn-secondary">Validate Another File</button>
+        </section>
+    </main>
+
+    <footer>
+        <p>
+            <a href="https://github.com/shorenet/validator" target="_blank">View Source Code</a>
+            &middot;
+            <a href="https://shorenet.co.uk" target="_blank">Shorenet</a>
+        </p>
+        <p class="disclaimer">
+            This validator runs entirely in your browser. No data is sent to any server.
+        </p>
+    </footer>
+
+    <script type="module" src="js/main.js"></script>
+</body>
+</html>
