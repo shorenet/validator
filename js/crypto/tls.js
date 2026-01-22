@@ -11,12 +11,13 @@ import { hexToBytes, bytesToHex, base64ToBytes } from './hash.js';
  * @param {string} label - Label string (without "tls13 " prefix)
  * @param {Uint8Array} context - Context data (usually empty or hash)
  * @param {number} length - Output length in bytes
+ * @param {string} hashAlgo - Hash algorithm ('SHA-256' or 'SHA-384')
  * @returns {Promise<Uint8Array>}
  */
-async function hkdfExpandLabel(secret, label, context, length) {
+async function hkdfExpandLabel(secret, label, context, length, hashAlgo = 'SHA-256') {
     const labelBytes = new TextEncoder().encode('tls13 ' + label);
 
-    // HkdfLabel structure:
+    // HkdfLabel structure (without counter):
     // uint16 length;
     // opaque label<7..255>;
     // opaque context<0..255>;
@@ -28,30 +29,34 @@ async function hkdfExpandLabel(secret, label, context, length) {
     hkdfLabel[3 + labelBytes.length] = context.length;
     hkdfLabel.set(context, 3 + labelBytes.length + 1);
 
-    // Export the secret to raw bytes for HKDF
+    // TLS 1.3 uses HKDF-Expand ONLY (not full HKDF)
+    // HKDF-Expand(PRK, info, L) = T(1) || T(2) || ... || T(N)
+    // where T(i) = HMAC-Hash(PRK, T(i-1) || info || 0x01)
+    // For L <= HashLen (which is true for TLS 1.3 keys), we only need T(1)
+    // T(1) = HMAC-Hash(PRK, info || 0x01)
+
+    // Build info || counter
+    const infoWithCounter = new Uint8Array(hkdfLabel.length + 1);
+    infoWithCounter.set(hkdfLabel);
+    infoWithCounter[hkdfLabel.length] = 0x01;  // Counter for first iteration
+
+    // Export the secret to raw bytes (secret is an HMAC key)
     const secretBytes = await crypto.subtle.exportKey('raw', secret);
 
-    // Import as HKDF key
-    const hkdfKey = await crypto.subtle.importKey(
+    // Import secret as HMAC key for expansion with correct hash algorithm
+    const hmacKey = await crypto.subtle.importKey(
         'raw',
         secretBytes,
-        { name: 'HKDF' },
+        { name: 'HMAC', hash: hashAlgo },
         false,
-        ['deriveBits']
+        ['sign']
     );
 
-    const derivedBits = await crypto.subtle.deriveBits(
-        {
-            name: 'HKDF',
-            hash: 'SHA-256',
-            salt: new Uint8Array(0),
-            info: hkdfLabel
-        },
-        hkdfKey,
-        length * 8
-    );
+    // HKDF-Expand: HMAC(PRK, info || 0x01)
+    const signature = await crypto.subtle.sign('HMAC', hmacKey, infoWithCounter);
 
-    return new Uint8Array(derivedBits);
+    // Return first 'length' bytes
+    return new Uint8Array(signature).slice(0, length);
 }
 
 /**
@@ -60,27 +65,32 @@ async function hkdfExpandLabel(secret, label, context, length) {
  * @returns {Promise<{key: CryptoKey, iv: Uint8Array}>}
  */
 async function deriveTrafficKeys(trafficSecret) {
+    // Detect cipher suite by secret length (SHA384 uses 48-byte secrets)
+    const useSha384 = trafficSecret.length === 48;
+    const hashAlgo = useSha384 ? 'SHA-384' : 'SHA-256';
+    const keyLen = useSha384 ? 32 : 16; // AES-256 vs AES-128
+
     // Import as HMAC key first to use for HKDF
     const hmacKey = await crypto.subtle.importKey(
         'raw',
         trafficSecret,
-        { name: 'HMAC', hash: 'SHA-256' },
+        { name: 'HMAC', hash: hashAlgo },
         true,
         ['sign']
     );
 
-    // Derive key (16 bytes for AES-128-GCM, 32 for AES-256-GCM)
-    const keyBytes = await hkdfExpandLabel(hmacKey, 'key', new Uint8Array(0), 16);
+    // Derive key
+    const keyBytes = await hkdfExpandLabel(hmacKey, 'key', new Uint8Array(0), keyLen, hashAlgo);
 
-    // Derive IV (12 bytes)
-    const iv = await hkdfExpandLabel(hmacKey, 'iv', new Uint8Array(0), 12);
+    // Derive IV (always 12 bytes)
+    const iv = await hkdfExpandLabel(hmacKey, 'iv', new Uint8Array(0), 12, hashAlgo);
 
-    // Import as AES-GCM key
+    // Import as AES-GCM key (extractable=true for debugging)
     const key = await crypto.subtle.importKey(
         'raw',
         keyBytes,
         { name: 'AES-GCM' },
-        false,
+        true,  // extractable - changed from false for debugging
         ['decrypt']
     );
 
@@ -118,15 +128,15 @@ function computeNonce(iv, seqNum) {
  * @param {CryptoKey} key - AES-GCM key
  * @param {Uint8Array} iv - Base IV
  * @param {number} seqNum - Sequence number
+ * @param {Uint8Array} recordHeader - The actual 5-byte TLS record header from the wire
  * @returns {Promise<{plaintext: Uint8Array, contentType: number}>}
  */
-async function decryptTls13Record(ciphertext, key, iv, seqNum) {
+async function decryptTls13Record(ciphertext, key, iv, seqNum, recordHeader) {
     const nonce = computeNonce(iv, seqNum);
 
-    // Additional authenticated data: record header
-    // TLS 1.3 uses a fixed header: 0x17 0x03 0x03 <length>
-    const recordLength = ciphertext.length;
-    const aad = new Uint8Array([0x17, 0x03, 0x03, (recordLength >> 8) & 0xff, recordLength & 0xff]);
+    // Additional authenticated data: use the actual record header from the wire
+    // NOT a constructed header! Python does this correctly at line 571
+    const aad = recordHeader;
 
     try {
         const plaintext = await crypto.subtle.decrypt(
@@ -274,9 +284,10 @@ async function deriveTls12Keys(masterSecret, clientRandom, serverRandom, cipherS
  * @param {CryptoKey} key - AES-GCM key
  * @param {Uint8Array} implicitIv - 4-byte implicit IV
  * @param {Uint8Array} recordHeader - 5-byte TLS record header (for AAD)
+ * @param {bigint|number} seqNum - Sequence number for AAD
  * @returns {Promise<Uint8Array>}
  */
-async function decryptTls12GcmRecord(ciphertext, key, implicitIv, recordHeader) {
+async function decryptTls12GcmRecord(ciphertext, key, implicitIv, recordHeader, seqNum) {
     // First 8 bytes are explicit nonce
     const explicitNonce = ciphertext.slice(0, 8);
     const encryptedData = ciphertext.slice(8);
@@ -286,15 +297,23 @@ async function decryptTls12GcmRecord(ciphertext, key, implicitIv, recordHeader) 
     nonce.set(implicitIv);
     nonce.set(explicitNonce, 4);
 
-    // AAD = seq_num (8 bytes) || record_header (5 bytes)
-    // For validation, we reconstruct AAD from record header with adjusted length
-    const aadLength = encryptedData.length - 16; // Subtract tag length
+    // AAD = seq_num (8 bytes) || content_type (1) || version (2) || plaintext_length (2)
+    const plaintextLength = encryptedData.length - 16; // Subtract auth tag
     const aad = new Uint8Array(13);
-    // We don't have seq_num in forensic data, so use record header only
-    // This is a simplification - full validation would need sequence numbers
-    aad.set(recordHeader.slice(0, 3));
-    aad[3] = (aadLength >> 8) & 0xff;
-    aad[4] = aadLength & 0xff;
+
+    // Write sequence number as big-endian 64-bit
+    let seq = BigInt(seqNum);
+    for (let i = 7; i >= 0; i--) {
+        aad[i] = Number(seq & 0xffn);
+        seq >>= 8n;
+    }
+
+    // Add record header components
+    aad[8] = recordHeader[0];  // content type
+    aad[9] = recordHeader[1];  // version high byte
+    aad[10] = recordHeader[2]; // version low byte
+    aad[11] = (plaintextLength >> 8) & 0xff; // length high byte
+    aad[12] = plaintextLength & 0xff;        // length low byte
 
     try {
         const plaintext = await crypto.subtle.decrypt(
@@ -324,6 +343,12 @@ export class TlsDecryptor {
         this.serverKey = null;
         this.clientIv = null;
         this.serverIv = null;
+        // TLS 1.3: separate sequence counters for handshake and application traffic
+        this.clientHandshakeSeq = 0n;
+        this.serverHandshakeSeq = 0n;
+        this.clientAppSeq = 0n;
+        this.serverAppSeq = 0n;
+        // TLS 1.2: single sequence counter
         this.clientSeq = 0n;
         this.serverSeq = 0n;
     }
@@ -399,12 +424,15 @@ export class TlsDecryptor {
     }
 
     /**
-     * Decrypt a TLS record.
+     * Decrypt a TLS record using exact sequence number and key type (if available) or search.
      * @param {Uint8Array} record - Full TLS record including header
      * @param {string} direction - 'client' or 'server'
-     * @returns {Promise<{plaintext: Uint8Array, contentType: number}>}
+     * @param {number} hintSeq - Sequence number to try first (default: 0)
+     * @param {number|null} tlsRecordSeq - Exact TLS record sequence from forensic evidence (if available)
+     * @param {string|null} tlsKeyType - Key type hint: 'handshake' or 'application' (if available)
+     * @returns {Promise<{plaintext: Uint8Array, contentType: number, seq: number, keyType: string}>}
      */
-    async decryptRecord(record, direction) {
+    async decryptRecord(record, direction, hintSeq = 0, tlsRecordSeq = null, tlsKeyType = null) {
         const contentType = record[0];
         const recordVersion = (record[1] << 8) | record[2];
         const length = (record[3] << 8) | record[4];
@@ -413,18 +441,102 @@ export class TlsDecryptor {
         const isClient = direction === 'client';
 
         if (this.version === 'TLS13') {
-            const key = isClient ? this.clientKey : this.serverKey;
-            const iv = isClient ? this.clientIv : this.serverIv;
-            const seq = isClient ? this.clientSeq++ : this.serverSeq++;
+            // NEW: If forensic evidence includes exact sequence number, use it directly (O(1))
+            // Otherwise fallback to sequence search (O(n)) for backward compatibility
+            // Use 1000 as a safe upper bound - each TLS record can be up to 16KB,
+            // so 1000 records = 16MB which is far beyond any single transaction
+            const seqsToTry = (tlsRecordSeq !== null && tlsRecordSeq !== undefined)
+                ? [tlsRecordSeq]  // Deterministic - single attempt
+                : (() => {
+                    // Sequence search for old evidence
+                    const seqs = [hintSeq];
+                    for (let i = 0; i < 1000; i++) {
+                        if (i !== hintSeq) seqs.push(i);
+                    }
+                    return seqs;
+                })();
 
-            return await decryptTls13Record(ciphertext, key, iv, seq);
+            // Build key list - prefer specific key type if hint available
+            const keysToTry = [];
+
+            // Application traffic keys
+            const appKey = isClient ? this.clientKey : this.serverKey;
+            const appIv = isClient ? this.clientIv : this.serverIv;
+
+            // Handshake traffic keys
+            const handshakeKeys = isClient ? this.handshakeClientKeys : this.handshakeServerKeys;
+
+            // If key type hint is provided, try that first (or only that if exact seq provided)
+            if (tlsKeyType === 'application' && appKey && appIv) {
+                keysToTry.push({ key: appKey, iv: appIv, type: 'application' });
+                // Only try other keys if we don't have exact sequence
+                if (tlsRecordSeq === null && handshakeKeys) {
+                    keysToTry.push({ key: handshakeKeys.key, iv: handshakeKeys.iv, type: 'handshake' });
+                }
+            } else if (tlsKeyType === 'handshake' && handshakeKeys) {
+                keysToTry.push({ key: handshakeKeys.key, iv: handshakeKeys.iv, type: 'handshake' });
+                // Only try other keys if we don't have exact sequence
+                if (tlsRecordSeq === null && appKey && appIv) {
+                    keysToTry.push({ key: appKey, iv: appIv, type: 'application' });
+                }
+            } else {
+                // No key type hint - try both (application first, then handshake)
+                if (appKey && appIv) {
+                    keysToTry.push({ key: appKey, iv: appIv, type: 'application' });
+                }
+                if (handshakeKeys) {
+                    keysToTry.push({ key: handshakeKeys.key, iv: handshakeKeys.iv, type: 'handshake' });
+                }
+            }
+
+            // Extract the actual record header (first 5 bytes) to use as AAD
+            const recordHeader = record.slice(0, 5);
+
+            // Try each key with each sequence
+            for (const { key, iv, type } of keysToTry) {
+                for (const seq of seqsToTry) {
+                    try {
+                        const result = await decryptTls13Record(ciphertext, key, iv, BigInt(seq), recordHeader);
+                        return { plaintext: result.plaintext, contentType: result.contentType, seq, keyType: type };
+                    } catch (e) {
+                        // Try next sequence/key combo
+                        continue;
+                    }
+                }
+            }
+
+            throw new Error(`Failed to decrypt TLS 1.3 record with any key/sequence`);
         } else {
+            // TLS 1.2 decryption with exact sequence or search
             const key = isClient ? this.clientKey : this.serverKey;
             const implicitIv = isClient ? this.clientIv : this.serverIv;
             const header = record.slice(0, 5);
 
-            const plaintext = await decryptTls12GcmRecord(ciphertext, key, implicitIv, header);
-            return { plaintext, contentType };
+            // NEW: Use exact sequence if available, otherwise fallback to search
+            // Use 1000 as a safe upper bound - each TLS record can be up to 16KB,
+            // so 1000 records = 16MB which is far beyond any single transaction
+            const seqsToTry = (tlsRecordSeq !== null && tlsRecordSeq !== undefined)
+                ? [tlsRecordSeq]  // Deterministic - single attempt
+                : (() => {
+                    // Sequence search for old evidence
+                    const seqs = [hintSeq];
+                    for (let i = 0; i < 1000; i++) {
+                        if (i !== hintSeq) seqs.push(i);
+                    }
+                    return seqs;
+                })();
+
+            for (const seq of seqsToTry) {
+                try {
+                    const plaintext = await decryptTls12GcmRecord(ciphertext, key, implicitIv, header, seq);
+                    return { plaintext, contentType, seq, keyType: 'application' };
+                } catch (e) {
+                    // Try next sequence
+                    continue;
+                }
+            }
+
+            throw new Error(`Failed to decrypt TLS 1.2 record with any sequence`);
         }
     }
 

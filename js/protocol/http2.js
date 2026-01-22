@@ -177,8 +177,15 @@ export class Http2Stream {
  * Handles multiple streams and HPACK state.
  */
 export class Http2Parser {
-    constructor() {
+    /**
+     * Create a new HTTP/2 parser.
+     * @param {Object} [hpackSnapshot] - Optional HPACK table snapshot for mid-connection validation
+     */
+    constructor(hpackSnapshot = null) {
         this.hpackDecoder = new HpackDecoder(4096);
+        if (hpackSnapshot) {
+            this.hpackDecoder.initFromSnapshot(hpackSnapshot);
+        }
         this.streams = new Map();
         this.settings = new Map();
         this.continuationStream = null;

@@ -5,6 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Shorenet Forensic Evidence Validator</title>
     <link rel="stylesheet" href="css/style.css">
+    <!-- Compression libraries (local copies) -->
+    <script src="js/lib/fflate.min.js"></script>
+    <script src="js/lib/fzstd.min.js"></script>
+    <script src="js/lib/brotli-init.js"></script>
 </head>
 <body>
     <header>
@@ -45,27 +49,25 @@
         <section id="results-section" class="hidden">
             <div class="results-header">
                 <h2 id="results-title">Validation Results</h2>
-                <span id="results-badge" class="badge"></span>
+                <div class="badge-group" id="badge-group">
+                    <span id="badge-decrypt" class="badge" title="TLS Decryption">Decrypt</span>
+                    <span id="badge-match" class="badge" title="Fields Match">Match</span>
+                    <span id="badge-overall" class="badge" title="Overall Result">Result</span>
+                </div>
             </div>
 
-            <div class="result-card" id="hash-verification">
-                <h3>Hash Chain Verification</h3>
-                <div class="result-content"></div>
-            </div>
-
-            <div class="result-card" id="tls-decryption">
-                <h3>TLS Decryption</h3>
-                <div class="result-content"></div>
-            </div>
-
-            <div class="result-card" id="protocol-parsing">
-                <h3>Protocol Parsing</h3>
-                <div class="result-content"></div>
-            </div>
-
-            <div class="result-card" id="content-verification">
-                <h3>Content Verification</h3>
-                <div class="result-content"></div>
+            <div class="comparison-grid">
+                <div class="result-card" id="claimed-card">
+                    <h3>Claimed (from transaction)</h3>
+                    <div class="result-content" id="claimed-content"></div>
+                </div>
+                <div class="comparison-indicator">
+                    <div class="match-indicator" id="match-indicator">?</div>
+                </div>
+                <div class="result-card" id="decrypted-card">
+                    <h3>Re-Decrypted (verified)</h3>
+                    <div class="result-content" id="decrypted-content"></div>
+                </div>
             </div>
 
             <div class="result-card hidden" id="websocket-messages">
@@ -74,7 +76,7 @@
             </div>
 
             <div class="result-card" id="transaction-details">
-                <h3>Transaction Details</h3>
+                <h3>Evidence Summary</h3>
                 <div class="result-content"></div>
             </div>
 

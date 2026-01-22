@@ -1,0 +1,9 @@
+{
+  "name": "shorenet-validator",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Forensic evidence validator for Shorenet",
+  "scripts": {
+    "validate": "node batch-validate.mjs"
+  }
+}

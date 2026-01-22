@@ -249,10 +249,52 @@ function decodeString(data, offset) {
  * HPACK decoder with dynamic table.
  */
 export class HpackDecoder {
-    constructor(maxTableSize = 4096) {
+    /**
+     * Create a new HPACK decoder.
+     * @param {number|Object} maxTableSizeOrSnapshot - Max table size (number) or snapshot object
+     */
+    constructor(maxTableSizeOrSnapshot = 4096) {
         this.dynamicTable = [];
-        this.maxTableSize = maxTableSize;
+        this.maxTableSize = 4096;
         this.currentTableSize = 0;
+
+        // If passed a snapshot object, initialize from it
+        if (typeof maxTableSizeOrSnapshot === 'object' && maxTableSizeOrSnapshot !== null) {
+            this.initFromSnapshot(maxTableSizeOrSnapshot);
+        } else if (typeof maxTableSizeOrSnapshot === 'number') {
+            this.maxTableSize = maxTableSizeOrSnapshot;
+        }
+    }
+
+    /**
+     * Initialize decoder from a snapshot (for mid-connection validation).
+     * @param {Object} snapshot - HPACK table snapshot from forensic evidence
+     * @param {Array<{name: string, value: string}>} snapshot.entries - Dynamic table entries
+     * @param {number} snapshot.max_size - Maximum table size
+     * @param {number} snapshot.current_size - Current table size
+     */
+    initFromSnapshot(snapshot) {
+        if (!snapshot) return;
+
+        this.maxTableSize = snapshot.max_size || 4096;
+        this.currentTableSize = snapshot.current_size || 0;
+
+        // Convert entries from {name, value} objects to [name, value] arrays
+        if (snapshot.entries && Array.isArray(snapshot.entries)) {
+            this.dynamicTable = snapshot.entries.map(entry => {
+                if (Array.isArray(entry)) {
+                    return entry;
+                }
+                return [entry.name || '', entry.value || ''];
+            });
+
+            // Recalculate current size if not provided
+            if (!snapshot.current_size) {
+                this.currentTableSize = this.dynamicTable.reduce(
+                    (sum, [name, value]) => sum + 32 + name.length + value.length, 0
+                );
+            }
+        }
     }
 
     /**
