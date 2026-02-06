@@ -1,0 +1,2253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shorenet Forensic Evidence Validator</title>
+    <script type="importmap">
+    {
+        "imports": {
+            "pako": "https://esm.sh/pako@2.1.0?no-sourcemap",
+            "@peculiar/x509": "https://esm.sh/@peculiar/x509@1.9.7?no-sourcemap",
+            "@noble/ed25519": "https://esm.sh/@noble/ed25519@2.1.0?no-sourcemap",
+            "brotli-wasm": "./lib/brotli_wasm.js"
+        }
+    }
+    </script>
+    <style>
+        :root {
+            --bg-primary: #0d1117;
+            --bg-secondary: #161b22;
+            --bg-tertiary: #21262d;
+            --bg-card: #1c2128;
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --text-muted: #6e7681;
+            --border-color: #30363d;
+            --border-light: #3d444d;
+            --accent-blue: #58a6ff;
+            --accent-green: #3fb950;
+            --accent-red: #f85149;
+            --accent-yellow: #d29922;
+            --accent-purple: #a371f7;
+            --accent-cyan: #76d9e6;
+            --success-bg: rgba(63, 185, 80, 0.1);
+            --error-bg: rgba(248, 81, 73, 0.1);
+            --warning-bg: rgba(210, 153, 34, 0.1);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            line-height: 1.5;
+        }
+
+        /* Header */
+        header {
+            text-align: center;
+            padding: 2rem 1rem;
+            border-bottom: 1px solid var(--border-color);
+            background: linear-gradient(180deg, var(--bg-secondary) 0%, var(--bg-primary) 100%);
+        }
+
+        header h1 {
+            font-size: 1.75rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-cyan));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        header .subtitle {
+            color: var(--text-secondary);
+            font-size: 1rem;
+        }
+
+        main {
+            flex: 1;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 2rem 1rem;
+            width: 100%;
+        }
+
+        /* Upload Section */
+        .input-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        @media (max-width: 700px) {
+            .input-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .upload-area {
+            border: 2px dashed var(--border-color);
+            border-radius: 12px;
+            padding: 2rem 1.5rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            background: var(--bg-secondary);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            min-height: 200px;
+        }
+
+        .upload-area:hover,
+        .upload-area.drag-over {
+            border-color: var(--accent-blue);
+            background: rgba(88, 166, 255, 0.05);
+        }
+
+        .upload-icon {
+            color: var(--text-secondary);
+            margin-bottom: 1rem;
+        }
+
+        .upload-area p {
+            color: var(--text-primary);
+            font-size: 1rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .upload-hint {
+            color: var(--text-muted) !important;
+            font-size: 0.875rem !important;
+        }
+
+        .paste-area {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .paste-area textarea {
+            width: 100%;
+            flex: 1;
+            min-height: 140px;
+            padding: 1rem;
+            background: var(--bg-secondary);
+            border: 2px dashed var(--border-color);
+            border-radius: 12px;
+            color: var(--text-primary);
+            font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+            font-size: 0.75rem;
+            resize: none;
+        }
+
+        .paste-area textarea:focus {
+            outline: none;
+            border-color: var(--accent-blue);
+        }
+
+        .paste-area textarea::placeholder {
+            color: var(--text-muted);
+        }
+
+        .btn-primary {
+            padding: 0.75rem 1.5rem;
+            background: var(--accent-blue);
+            border: none;
+            border-radius: 6px;
+            color: white;
+            font-size: 0.875rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+
+        .btn-primary:hover {
+            background: #2188ff;
+        }
+
+        .btn-primary:disabled {
+            background: var(--bg-tertiary);
+            color: var(--text-muted);
+            cursor: not-allowed;
+        }
+
+        .btn-secondary {
+            display: block;
+            width: 100%;
+            max-width: 300px;
+            margin: 2rem auto 0;
+            padding: 0.75rem 1.5rem;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            color: var(--text-primary);
+            font-size: 0.875rem;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .btn-secondary:hover {
+            background: var(--bg-secondary);
+            border-color: var(--text-muted);
+        }
+
+        /* Progress Section */
+        .progress-section {
+            margin: 2rem auto;
+            max-width: 600px;
+        }
+
+        .progress-container {
+            height: 4px;
+            background: var(--bg-tertiary);
+            border-radius: 2px;
+            overflow: hidden;
+            margin-bottom: 1rem;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent-blue), var(--accent-cyan));
+            width: 0%;
+            transition: width 0.3s ease;
+        }
+
+        .status-text {
+            text-align: center;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
+
+        /* Summary Stats */
+        .summary-banner {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            justify-content: center;
+            padding: 1.5rem;
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            margin-bottom: 2rem;
+        }
+
+        .summary-stat {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 0.75rem 1.5rem;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            min-width: 100px;
+        }
+
+        .summary-stat .value {
+            font-size: 1.75rem;
+            font-weight: 700;
+            line-height: 1;
+        }
+
+        .summary-stat .label {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-top: 0.25rem;
+        }
+
+        .summary-stat.valid .value { color: var(--accent-green); }
+        .summary-stat.failed .value { color: var(--accent-red); }
+        .summary-stat.full .value { color: var(--accent-cyan); }
+
+        /* Hidden class */
+        .hidden {
+            display: none !important;
+        }
+
+        /* Transaction Card */
+        .transaction-card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            margin-bottom: 1.5rem;
+            border: 1px solid var(--border-color);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .transaction-card.valid {
+            border-color: var(--accent-green);
+        }
+
+        .transaction-card.invalid {
+            border-color: var(--accent-red);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 1rem 1.25rem;
+            background: var(--bg-secondary);
+            border-bottom: 1px solid var(--border-color);
+            cursor: pointer;
+            border-radius: 12px 12px 0 0;
+        }
+
+        .card-header:not(.expanded) {
+            border-radius: 12px;
+            border-bottom: none;
+        }
+
+        .card-header:hover {
+            background: var(--bg-tertiary);
+        }
+
+        .card-title {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .card-index {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            font-family: 'SF Mono', Monaco, monospace;
+        }
+
+        .card-method {
+            font-weight: 600;
+            padding: 0.25rem 0.5rem;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            font-size: 0.8rem;
+        }
+
+        .card-url {
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+            max-width: 400px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .card-badges {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .badge {
+            padding: 0.25rem 0.75rem;
+            border-radius: 999px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .badge-valid {
+            background: var(--success-bg);
+            color: var(--accent-green);
+            border: 1px solid var(--accent-green);
+        }
+
+        .badge-invalid {
+            background: var(--error-bg);
+            color: var(--accent-red);
+            border: 1px solid var(--accent-red);
+        }
+
+        .badge-level {
+            background: var(--bg-tertiary);
+            color: var(--accent-cyan);
+            border: 1px solid var(--border-light);
+        }
+
+        .expand-icon {
+            color: var(--text-muted);
+            transition: transform 0.2s;
+        }
+
+        .card-header.expanded .expand-icon {
+            transform: rotate(180deg);
+        }
+
+        /* Card Body */
+        .card-body {
+            display: none;
+            padding: 1.25rem;
+            border-radius: 0 0 12px 12px;
+        }
+
+        .card-body.expanded {
+            display: block;
+        }
+
+        /* Comparison Grid */
+        .comparison-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+        }
+
+        @media (max-width: 900px) {
+            .comparison-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .comparison-column {
+            background: var(--bg-secondary);
+            border-radius: 8px;
+        }
+
+        .column-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.75rem 1rem;
+            background: var(--bg-tertiary);
+            border-bottom: 1px solid var(--border-color);
+            border-radius: 8px 8px 0 0;
+        }
+
+        .column-title {
+            font-weight: 600;
+            font-size: 0.875rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .column-title.claimed {
+            color: var(--accent-blue);
+        }
+
+        .column-title.extracted {
+            color: var(--accent-green);
+        }
+
+        .column-content {
+            padding: 1rem;
+            border-radius: 0 0 8px 8px;
+        }
+
+        /* Comparison Row */
+        .comparison-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.5rem 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .comparison-row:last-child {
+            border-bottom: none;
+        }
+
+        .row-label {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+        }
+
+        .row-value {
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 0.8rem;
+            color: var(--text-primary);
+            word-break: break-all;
+            max-width: 250px;
+            text-align: right;
+        }
+
+        .row-value.truncated {
+            max-width: 200px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* Documentation Modal */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.75);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.2s, visibility 0.2s;
+            padding: 1rem;
+        }
+
+        .modal-overlay.active {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .modal {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            max-width: 700px;
+            width: 100%;
+            max-height: 85vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        }
+
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 1.25rem 1.5rem;
+            border-bottom: 1px solid var(--border-color);
+            background: var(--bg-tertiary);
+        }
+
+        .modal-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 0.5rem;
+            border-radius: 6px;
+            transition: all 0.15s;
+        }
+
+        .modal-close:hover {
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+        }
+
+        .modal-body {
+            padding: 1.5rem;
+            overflow-y: auto;
+            line-height: 1.7;
+            color: var(--text-secondary);
+        }
+
+        .modal-body h3 {
+            color: var(--text-primary);
+            font-size: 1rem;
+            margin: 1.5rem 0 0.75rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .modal-body h3:first-child {
+            margin-top: 0;
+        }
+
+        .modal-body p {
+            margin-bottom: 1rem;
+        }
+
+        .modal-body code {
+            background: var(--bg-primary);
+            padding: 0.2rem 0.4rem;
+            border-radius: 4px;
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 0.85em;
+            color: var(--accent-cyan);
+        }
+
+        .modal-body pre {
+            background: var(--bg-primary);
+            padding: 1rem;
+            border-radius: 8px;
+            overflow-x: auto;
+            margin: 1rem 0;
+            font-size: 0.8rem;
+            border: 1px solid var(--border-color);
+        }
+
+        .modal-body ul, .modal-body ol {
+            margin: 0.75rem 0 1rem 1.5rem;
+        }
+
+        .modal-body li {
+            margin-bottom: 0.5rem;
+        }
+
+        .modal-body .highlight {
+            background: rgba(88, 166, 255, 0.1);
+            border-left: 3px solid var(--accent-blue);
+            padding: 0.75rem 1rem;
+            margin: 1rem 0;
+            border-radius: 0 6px 6px 0;
+        }
+
+        .modal-body .warning {
+            background: rgba(210, 153, 34, 0.1);
+            border-left: 3px solid var(--accent-yellow);
+            padding: 0.75rem 1rem;
+            margin: 1rem 0;
+            border-radius: 0 6px 6px 0;
+        }
+
+        /* Doc Link Button */
+        .doc-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            color: var(--accent-blue);
+            font-size: 0.75rem;
+            cursor: pointer;
+            text-decoration: none;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            transition: all 0.15s;
+        }
+
+        .doc-link:hover {
+            background: rgba(88, 166, 255, 0.1);
+            text-decoration: underline;
+        }
+
+        .doc-link svg {
+            width: 12px;
+            height: 12px;
+        }
+
+        /* Match Status */
+        .match-indicator {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem;
+            padding: 1rem;
+            margin-top: 1rem;
+            border-radius: 8px;
+            font-weight: 500;
+        }
+
+        .match-indicator.match {
+            background: var(--success-bg);
+            color: var(--accent-green);
+            border: 1px solid var(--accent-green);
+        }
+
+        .match-indicator.mismatch {
+            background: var(--error-bg);
+            color: var(--accent-red);
+            border: 1px solid var(--accent-red);
+        }
+
+        /* Expandable Section */
+        .expandable-section {
+            margin-top: 1.5rem;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+        }
+
+        .section-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0.75rem 1rem;
+            background: var(--bg-tertiary);
+            cursor: pointer;
+            user-select: none;
+            border-radius: 7px 7px 0 0;
+        }
+
+        .section-header:not(.expanded) {
+            border-radius: 7px;
+        }
+
+        .section-header:hover {
+            background: var(--bg-secondary);
+        }
+
+        .section-title {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-weight: 500;
+            font-size: 0.875rem;
+        }
+
+        .section-content {
+            display: none;
+            padding: 1rem;
+            background: var(--bg-secondary);
+            border-radius: 0 0 7px 7px;
+        }
+
+        .section-content.expanded {
+            display: block;
+        }
+
+        /* Security Proofs */
+        .proof-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1rem;
+            margin-top: 1rem;
+        }
+
+        .proof-card {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            padding: 1rem;
+            background: var(--bg-secondary);
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+        }
+
+        .proof-card.verified {
+            border-color: var(--accent-green);
+            background: var(--success-bg);
+        }
+
+        .proof-card.failed {
+            border-color: var(--accent-red);
+            background: var(--error-bg);
+        }
+
+        .proof-icon {
+            font-size: 1.25rem;
+        }
+
+        .proof-details {
+            flex: 1;
+        }
+
+        .proof-name {
+            font-weight: 600;
+            font-size: 0.875rem;
+            margin-bottom: 0.25rem;
+        }
+
+        .proof-status {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+        }
+
+        .proof-card.verified .proof-name { color: var(--accent-green); }
+        .proof-card.failed .proof-name { color: var(--accent-red); }
+
+        .proof-hash {
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 0.7rem;
+            color: var(--accent-cyan);
+            margin-top: 0.25rem;
+        }
+
+        /* TLS Info Grid */
+        .tls-info-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 0.75rem;
+            margin-bottom: 1.5rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        @media (max-width: 600px) {
+            .tls-info-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .tls-info-item {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+
+        .tls-label {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .tls-value {
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 0.85rem;
+            color: var(--text-primary);
+        }
+
+        .tls-value.truncated {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* Certificate Chain */
+        .cert-chain-title {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .cert-chain {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .cert-item {
+            padding: 1rem;
+            background: var(--bg-tertiary);
+            border-radius: 8px;
+            border-left: 3px solid var(--border-color);
+            position: relative;
+        }
+
+        .cert-item.leaf {
+            border-left-color: var(--accent-green);
+        }
+
+        .cert-item.intermediate {
+            border-left-color: var(--accent-purple);
+        }
+
+        .cert-item.root {
+            border-left-color: var(--accent-blue);
+        }
+
+        .cert-type-badge {
+            display: inline-block;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.65rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 0.5rem;
+        }
+
+        .cert-type-badge.leaf {
+            background: rgba(63, 185, 80, 0.15);
+            color: var(--accent-green);
+            border: 1px solid var(--accent-green);
+        }
+
+        .cert-type-badge.intermediate {
+            background: rgba(163, 113, 247, 0.15);
+            color: var(--accent-purple);
+            border: 1px solid var(--accent-purple);
+        }
+
+        .cert-type-badge.root {
+            background: rgba(88, 166, 255, 0.15);
+            color: var(--accent-blue);
+            border: 1px solid var(--accent-blue);
+        }
+
+        /* Error Banner */
+        .error-banner {
+            background: rgba(248, 81, 73, 0.1);
+            border: 1px solid var(--accent-red);
+            border-radius: 8px;
+            padding: 1rem;
+            margin: 1rem 0;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+        }
+
+        .error-banner .error-icon {
+            color: var(--accent-red);
+            font-size: 1.25rem;
+            flex-shrink: 0;
+        }
+
+        .error-banner .error-content {
+            flex: 1;
+        }
+
+        .error-banner .error-title {
+            color: var(--accent-red);
+            font-weight: 600;
+            margin-bottom: 0.25rem;
+        }
+
+        .error-banner .error-message {
+            color: var(--text-secondary);
+            font-size: 0.9rem;
+            font-family: 'SF Mono', Monaco, monospace;
+        }
+
+        .error-banner .error-details {
+            margin-top: 0.75rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid var(--border-color);
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .cert-type-badge.certificate {
+            background: var(--bg-secondary);
+            color: var(--text-secondary);
+            border: 1px solid var(--border-color);
+        }
+
+        .cert-item .cert-subject {
+            font-weight: 600;
+            font-size: 0.9rem;
+            margin-bottom: 0.75rem;
+            color: var(--text-primary);
+            word-break: break-word;
+        }
+
+        .cert-item .cert-detail {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.75rem;
+            padding: 0.35rem 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .cert-item .cert-detail:last-child {
+            border-bottom: none;
+        }
+
+        .cert-item .cert-detail span:first-child {
+            color: var(--text-muted);
+        }
+
+        .cert-item .cert-detail span:last-child {
+            color: var(--text-secondary);
+            font-family: 'SF Mono', Monaco, monospace;
+            text-align: right;
+            max-width: 60%;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* Differences List */
+        .differences-list {
+            margin-top: 1rem;
+        }
+
+        .diff-item {
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+            padding: 0.75rem;
+            background: var(--error-bg);
+            border-radius: 6px;
+            margin-bottom: 0.5rem;
+            font-size: 0.8rem;
+            color: var(--accent-red);
+        }
+
+        .diff-item:last-child {
+            margin-bottom: 0;
+        }
+
+        /* Footer */
+        footer {
+            text-align: center;
+            padding: 1.5rem 1rem;
+            border-top: 1px solid var(--border-color);
+            color: var(--text-muted);
+            font-size: 0.75rem;
+        }
+
+        footer a {
+            color: var(--accent-blue);
+            text-decoration: none;
+        }
+
+        footer a:hover {
+            text-decoration: underline;
+        }
+
+        .footer-links {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .disclaimer {
+            color: var(--text-muted);
+            font-size: 0.7rem;
+        }
+
+        /* Hash Display */
+        .hash-display {
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 0.7rem;
+            padding: 0.5rem;
+            background: var(--bg-primary);
+            border-radius: 4px;
+            word-break: break-all;
+            color: var(--accent-blue);
+            border: 1px solid var(--border-color);
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Shorenet Forensic Evidence Validator</h1>
+        <p class="subtitle">Independently verify HTTP and WebSocket transaction evidence</p>
+    </header>
+
+    <main>
+        <section id="upload-section">
+            <div class="input-grid">
+                <div class="upload-area drop-zone" id="drop-zone">
+                    <div class="upload-icon">
+                        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                            <polyline points="17 8 12 3 7 8"/>
+                            <line x1="12" y1="3" x2="12" y2="15"/>
+                        </svg>
+                    </div>
+                    <p>Drop JSONL file here</p>
+                    <p class="upload-hint">or click to select</p>
+                    <input type="file" id="file-input" accept=".jsonl,.json" hidden>
+                </div>
+
+                <div class="paste-area">
+                    <textarea id="paste-input" placeholder="Or paste transaction JSON here..."></textarea>
+                    <button id="validate-paste-btn" class="btn-primary">Validate</button>
+                </div>
+            </div>
+        </section>
+
+        <section id="validation-section" class="progress-section hidden">
+            <div class="progress-container">
+                <div class="progress-bar" id="progress-bar"></div>
+            </div>
+            <div class="status-text" id="status-text">Validating...</div>
+        </section>
+
+        <section id="results-section" class="hidden">
+            <div class="summary-banner hidden" id="summary-banner">
+                <div class="summary-stat">
+                    <span class="value" id="stat-total">0</span>
+                    <span class="label">Total</span>
+                </div>
+                <div class="summary-stat valid">
+                    <span class="value" id="stat-valid">0</span>
+                    <span class="label">Valid</span>
+                </div>
+                <div class="summary-stat full">
+                    <span class="value" id="stat-full">0</span>
+                    <span class="label">Full Proof</span>
+                </div>
+                <div class="summary-stat failed">
+                    <span class="value" id="stat-failed">0</span>
+                    <span class="label">Failed</span>
+                </div>
+            </div>
+
+            <div class="results-container" id="results-container"></div>
+
+            <button id="reset-btn" class="btn-secondary">Validate Another File</button>
+        </section>
+    </main>
+
+    <footer>
+        <div class="footer-links">
+            <span>Build: 2026-02-03T15:00:00Z</span>
+            <a href="https://github.com/shorenet/validator" target="_blank">GitHub</a>
+            <a href="https://shorenet.co.uk" target="_blank">Shorenet</a>
+        </div>
+        <p class="disclaimer">
+            This validator runs entirely in your browser. No data is sent to any server.
+        </p>
+    </footer>
+
+    <!-- Documentation Modal -->
+    <div class="modal-overlay" id="doc-modal">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title" id="modal-title">Documentation</div>
+                <button class="modal-close" onclick="closeDocModal()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="modal-body" id="modal-body"></div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { validate } from './src/index.js';
+        import * as x509 from '@peculiar/x509';
+
+        // Module scripts are deferred, so DOM is already ready - no need for DOMContentLoaded
+        (function init() {
+            const fileInput = document.getElementById('file-input');
+            const dropZone = document.getElementById('drop-zone');
+            const pasteInput = document.getElementById('paste-input');
+            const validatePasteBtn = document.getElementById('validate-paste-btn');
+            const resetBtn = document.getElementById('reset-btn');
+            const uploadSection = document.getElementById('upload-section');
+            const validationSection = document.getElementById('validation-section');
+            const resultsSection = document.getElementById('results-section');
+            const progressBar = document.getElementById('progress-bar');
+            const statusText = document.getElementById('status-text');
+            const resultsContainer = document.getElementById('results-container');
+            const summaryBanner = document.getElementById('summary-banner');
+
+            let isValidating = false;
+
+            // Stats elements
+            const statElements = {
+                total: document.getElementById('stat-total'),
+                valid: document.getElementById('stat-valid'),
+                full: document.getElementById('stat-full'),
+                failed: document.getElementById('stat-failed'),
+            };
+
+            function updateStats(stats) {
+                statElements.total.textContent = stats.total || 0;
+                statElements.valid.textContent = stats.valid || 0;
+                statElements.full.textContent = stats.full || 0;
+                statElements.failed.textContent = stats.failed || 0;
+            }
+
+            function showProgress(message, current, total) {
+                const percentage = total > 0 ? Math.round((current / total) * 100) : 0;
+                progressBar.style.width = `${percentage}%`;
+                statusText.textContent = `${message} (${current}/${total})`;
+            }
+
+            function escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = String(text || '');
+                return div.innerHTML;
+            }
+
+            function truncate(str, len = 40) {
+                if (!str) return '';
+                return str.length > len ? str.substring(0, len) + '...' : str;
+            }
+
+            // Documentation content for modal popouts
+            const docs = {
+                'how-it-works': {
+                    title: 'How Forensic Validation Works',
+                    icon: '🔍',
+                    content: `
+                        <h3>Overview</h3>
+                        <p>This validator independently verifies that HTTP/WebSocket transactions are authentic by re-processing the raw encrypted network packets.</p>
+
+                        <div class="highlight">
+                            <strong>Key Principle:</strong> We don't trust the transaction metadata. Instead, we decrypt the raw TLS packets using the captured keylog and extract the HTTP data ourselves. If our extracted values match the claimed values, the transaction is cryptographically verified.
+                        </div>
+
+                        <h3>What Gets Verified</h3>
+                        <ol>
+                            <li><strong>TLS Handshake</strong> - We verify the server's certificate and cryptographic signatures</li>
+                            <li><strong>HTTP Data</strong> - We decrypt the application data and parse the HTTP request/response</li>
+                            <li><strong>Content Match</strong> - We compare extracted values against claimed values</li>
+                        </ol>
+
+                        <h3>Evidence Bundle Contents</h3>
+                        <p>Each transaction includes:</p>
+                        <ul>
+                            <li><code>raw_packets</code> - The actual encrypted network packets</li>
+                            <li><code>keylog</code> - TLS session keys in NSS format (allows decryption)</li>
+                            <li><code>certificate_info</code> - Server certificate chain and TLS parameters</li>
+                        </ul>
+
+                        <h3>Security Model</h3>
+                        <p>The forensic proof relies on the fact that:</p>
+                        <ul>
+                            <li>Only the legitimate server can produce valid TLS handshake signatures</li>
+                            <li>The keylog allows anyone to decrypt the traffic, but only after the fact</li>
+                            <li>Tampering with packets would break decryption or produce mismatched hashes</li>
+                        </ul>
+                    `
+                },
+                'claimed-values': {
+                    title: 'Claimed Values (Transaction Metadata)',
+                    icon: '📄',
+                    content: `
+                        <h3>What are Claimed Values?</h3>
+                        <p>These are the values recorded by the capture application when the transaction occurred. They represent what the application <em>claims</em> happened.</p>
+
+                        <h3>Why We Don't Trust Them</h3>
+                        <p>The capture application could potentially:</p>
+                        <ul>
+                            <li>Modify the recorded method, URL, or status code</li>
+                            <li>Alter request or response bodies</li>
+                            <li>Change timestamps or other metadata</li>
+                        </ul>
+
+                        <div class="warning">
+                            <strong>Important:</strong> Claimed values alone are not proof. They must be independently verified against the raw packet evidence.
+                        </div>
+
+                        <h3>Fields Compared</h3>
+                        <ul>
+                            <li><strong>Method</strong> - HTTP method (GET, POST, etc.)</li>
+                            <li><strong>Host</strong> - Target hostname from the URL</li>
+                            <li><strong>Status</strong> - HTTP response status code</li>
+                            <li><strong>Protocol</strong> - HTTP version (1.1, 2, 3)</li>
+                            <li><strong>Body Sizes</strong> - Request and response payload sizes</li>
+                        </ul>
+                    `
+                },
+                'extracted-values': {
+                    title: 'Extracted Values (From Raw Packets)',
+                    icon: '🔓',
+                    content: `
+                        <h3>What are Extracted Values?</h3>
+                        <p>These values are independently derived by this validator from the raw encrypted packets. The process is:</p>
+
+                        <ol>
+                            <li><strong>Parse keylog</strong> - Extract TLS session keys from the NSS keylog format</li>
+                            <li><strong>Decrypt TLS records</strong> - Use the keys to decrypt application data</li>
+                            <li><strong>Parse HTTP</strong> - Extract method, headers, status, and body from decrypted data</li>
+                        </ol>
+
+                        <h3>Why This is Trustworthy</h3>
+                        <div class="highlight">
+                            The decryption process is deterministic. Given the same packets and keys, any validator will extract the same values. If someone tampered with the packets, decryption would fail or produce garbage.
+                        </div>
+
+                        <h3>SNI Verification</h3>
+                        <p>The Server Name Indication (SNI) is extracted from the TLS ClientHello message. This is sent in plaintext before encryption begins, proving which server hostname was actually contacted.</p>
+
+                        <h3>Verification Icons</h3>
+                        <ul>
+                            <li><span style="color: var(--accent-green);">✓</span> - Extracted value matches claimed value</li>
+                            <li><span style="color: var(--accent-red);">✗</span> - Values don't match (potential tampering or error)</li>
+                        </ul>
+                    `
+                },
+                'certificate-verify': {
+                    title: 'CertificateVerify Signature (TLS 1.3)',
+                    icon: '🔐',
+                    content: `
+                        <h3>What is CertificateVerify?</h3>
+                        <p>In TLS 1.3, after the server sends its certificate, it must prove it actually owns the private key. It does this by signing a hash of the entire handshake transcript.</p>
+
+                        <h3>How We Verify It</h3>
+                        <pre>1. Reconstruct the handshake transcript (all messages up to CertificateVerify)
+2. Compute: SHA-256(transcript)
+3. Build the signed content:
+   "                                " (64 spaces)
+   + "TLS 1.3, server CertificateVerify"
+   + 0x00
+   + transcript_hash
+4. Verify signature using certificate's public key</pre>
+
+                        <h3>Why This Matters</h3>
+                        <div class="highlight">
+                            <strong>This is the strongest proof available.</strong> Only the legitimate server (possessing the private key) can produce a valid signature. A man-in-the-middle attacker cannot forge this, even if they intercept all traffic.
+                        </div>
+
+                        <h3>Signature Algorithms</h3>
+                        <p>Common algorithms include:</p>
+                        <ul>
+                            <li><code>rsa_pss_rsae_sha256</code> - RSA-PSS with SHA-256</li>
+                            <li><code>ecdsa_secp256r1_sha256</code> - ECDSA with P-256 curve</li>
+                            <li><code>ed25519</code> - Edwards curve digital signature</li>
+                        </ul>
+                    `
+                },
+                'server-key-exchange': {
+                    title: 'ServerKeyExchange Signature (TLS 1.2)',
+                    icon: '🔑',
+                    content: `
+                        <h3>What is ServerKeyExchange?</h3>
+                        <p>In TLS 1.2 with ephemeral key exchange (ECDHE), the server sends its ephemeral public key in a ServerKeyExchange message. This must be signed to prevent tampering.</p>
+
+                        <h3>How We Verify It</h3>
+                        <pre>1. Extract the server's ECDHE public key from ServerKeyExchange
+2. Extract the signature from the message
+3. Build the signed content:
+   client_random (32 bytes)
+   + server_random (32 bytes)
+   + ECDH parameters (curve, public key)
+4. Verify signature using certificate's public key</pre>
+
+                        <h3>Why This Matters</h3>
+                        <p>Without this signature, an attacker could substitute their own public key and perform a man-in-the-middle attack. The signature binds the key exchange to the authenticated server.</p>
+
+                        <div class="warning">
+                            <strong>Note:</strong> TLS 1.2 with RSA key exchange (non-ECDHE) doesn't have this message. The security relies solely on the certificate chain in that case.
+                        </div>
+                    `
+                },
+                'certificate-chain': {
+                    title: 'Certificate Chain Validation',
+                    icon: '📜',
+                    content: `
+                        <h3>What is a Certificate Chain?</h3>
+                        <p>A certificate chain links the server's certificate to a trusted root Certificate Authority (CA). Each certificate is signed by its issuer.</p>
+
+                        <pre>LEAF (server) → signed by → INTERMEDIATE → signed by → ROOT (trusted)</pre>
+
+                        <h3>What We Verify</h3>
+                        <ol>
+                            <li><strong>Chain Signatures</strong> - Each certificate's signature is valid</li>
+                            <li><strong>SNI Match</strong> - The leaf certificate is valid for the requested hostname</li>
+                            <li><strong>Validity Period</strong> - Certificates haven't expired (or were valid at capture time)</li>
+                        </ol>
+
+                        <h3>Certificate Types</h3>
+                        <ul>
+                            <li><span style="color: var(--accent-green);">LEAF</span> - The server's certificate (index 0)</li>
+                            <li><span style="color: var(--accent-purple);">INTERMEDIATE</span> - CA certificates that link to the root</li>
+                            <li><span style="color: var(--accent-blue);">ROOT</span> - Self-signed trusted root CA</li>
+                        </ul>
+
+                        <h3>Cross-Signed Certificates</h3>
+                        <p>Some root CAs are cross-signed by other CAs for broader trust. In this case, what looks like a "root" may actually be an intermediate signed by another root.</p>
+                    `
+                },
+                'transaction-hash': {
+                    title: 'Transaction Hash Verification',
+                    icon: '#️⃣',
+                    content: `
+                        <h3>What is Transaction Hash Verification?</h3>
+                        <p>We compute a SHA-256 hash of both the claimed transaction and the reconstructed transaction from packets. If they match, the content is identical.</p>
+
+                        <h3>How It Works</h3>
+                        <pre>1. Normalize the claimed transaction (sort keys, etc.)
+2. Compute: claimed_hash = SHA-256(claimed_transaction)
+3. Reconstruct transaction from decrypted packets
+4. Compute: extracted_hash = SHA-256(reconstructed_transaction)
+5. Compare: claimed_hash === extracted_hash</pre>
+
+                        <h3>Why This Matters</h3>
+                        <div class="highlight">
+                            A hash match proves the entire transaction content is identical. Any modification—even a single byte—would produce a completely different hash.
+                        </div>
+
+                        <h3>Hash Display</h3>
+                        <p>The displayed hash is typically truncated for readability. The full 64-character hex string (256 bits) is used for comparison.</p>
+                    `
+                },
+                'tls-parameters': {
+                    title: 'TLS Connection Parameters',
+                    icon: '🔒',
+                    content: `
+                        <h3>SNI (Server Name Indication)</h3>
+                        <p>Sent in plaintext during the TLS handshake. Proves which server hostname the client intended to connect to. Essential for virtual hosting where multiple sites share an IP.</p>
+
+                        <h3>TLS Version</h3>
+                        <ul>
+                            <li><strong>TLS 1.3</strong> - Modern, provides CertificateVerify proof</li>
+                            <li><strong>TLS 1.2</strong> - Older, uses ServerKeyExchange for ECDHE</li>
+                        </ul>
+
+                        <h3>ALPN (Application-Layer Protocol Negotiation)</h3>
+                        <p>Negotiates which protocol to use over TLS:</p>
+                        <ul>
+                            <li><code>h2</code> - HTTP/2</li>
+                            <li><code>http/1.1</code> - HTTP/1.1</li>
+                            <li><code>h3</code> - HTTP/3 (over QUIC)</li>
+                        </ul>
+
+                        <h3>Cipher Suite</h3>
+                        <p>Defines the encryption algorithms used. Modern suites include:</p>
+                        <ul>
+                            <li><code>TLS_AES_256_GCM_SHA384</code> - TLS 1.3</li>
+                            <li><code>TLS_CHACHA20_POLY1305_SHA256</code> - TLS 1.3</li>
+                            <li><code>ECDHE-RSA-AES256-GCM-SHA384</code> - TLS 1.2</li>
+                        </ul>
+                    `
+                }
+            };
+
+            // Make modal functions globally accessible
+            window.openDocModal = function(docId) {
+                const doc = docs[docId];
+                if (!doc) return;
+                document.getElementById('modal-title').innerHTML = '<span>' + doc.icon + '</span> ' + doc.title;
+                document.getElementById('modal-body').innerHTML = doc.content;
+                document.getElementById('doc-modal').classList.add('active');
+                document.body.style.overflow = 'hidden';
+            };
+
+            window.closeDocModal = function() {
+                document.getElementById('doc-modal').classList.remove('active');
+                document.body.style.overflow = '';
+            };
+
+            // Close on overlay click or escape
+            document.getElementById('doc-modal').addEventListener('click', (e) => {
+                if (e.target.classList.contains('modal-overlay')) closeDocModal();
+            });
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') closeDocModal();
+            });
+
+            function createDocLink(docId, label) {
+                label = label || 'Learn more';
+                return '<a class="doc-link" onclick="openDocModal(\'' + docId + '\')">' +
+                    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+                    '<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/>' +
+                    '</svg>' + label + '</a>';
+            }
+
+            function parseCertificateInfo(base64Der, index, totalCerts) {
+                try {
+                    // Decode base64 to binary
+                    const binaryString = atob(base64Der);
+                    const bytes = new Uint8Array(binaryString.length);
+                    for (let i = 0; i < binaryString.length; i++) {
+                        bytes[i] = binaryString.charCodeAt(i);
+                    }
+
+                    const cert = new x509.X509Certificate(bytes);
+
+                    // Determine certificate type
+                    let certType = 'INTERMEDIATE';
+                    if (index === 0) {
+                        certType = 'LEAF';
+                    } else if (index === totalCerts - 1) {
+                        // Check if self-signed (issuer == subject)
+                        if (cert.issuer === cert.subject) {
+                            certType = 'ROOT';
+                        }
+                    }
+
+                    // Extract CN from subject
+                    const subjectCN = cert.subject.match(/CN=([^,]+)/)?.[1] || cert.subject;
+                    const issuerCN = cert.issuer.match(/CN=([^,]+)/)?.[1] || cert.issuer;
+
+                    return {
+                        type: certType,
+                        subject: subjectCN,
+                        issuer: issuerCN,
+                        validFrom: cert.notBefore.toISOString().split('T')[0],
+                        validTo: cert.notAfter.toISOString().split('T')[0],
+                        serialNumber: cert.serialNumber.substring(0, 20) + (cert.serialNumber.length > 20 ? '...' : ''),
+                        algorithm: cert.signatureAlgorithm?.name || 'Unknown'
+                    };
+                } catch (e) {
+                    return {
+                        type: index === 0 ? 'LEAF' : 'CERTIFICATE',
+                        subject: 'Failed to parse',
+                        issuer: 'Unknown',
+                        validFrom: 'N/A',
+                        validTo: 'N/A',
+                        serialNumber: 'N/A',
+                        algorithm: 'N/A',
+                        error: e.message
+                    };
+                }
+            }
+
+            function renderTransactionCard(tx, result, index, autoExpand = false) {
+                const evidence = tx.forensic_evidence || {};
+                const certInfo = evidence.certificate_info || {};
+                const request = tx.request || {};
+                const response = tx.response || {};
+
+                const isValid = result.valid;
+                const level = result.level || 'failed';
+
+                // Build claimed vs extracted comparison
+                const claimed = {
+                    method: request.method || 'N/A',
+                    url: request.url || 'N/A',
+                    status: response.status || 'N/A',
+                    host: new URL(request.url || 'http://unknown').hostname,
+                    protocol: tx.protocol || 'Unknown',
+                    requestBodySize: request.body ? atob(request.body).length : 0,
+                    responseBodySize: response.body ? atob(response.body).length : 0,
+                };
+
+                const extracted = result.details?.extracted || {
+                    method: claimed.method,
+                    url: claimed.url,
+                    status: claimed.status,
+                    host: certInfo.sni || claimed.host,
+                    protocol: claimed.protocol,
+                    requestBodySize: claimed.requestBodySize,
+                    responseBodySize: claimed.responseBodySize,
+                };
+
+                // Check matches
+                const matches = {
+                    method: claimed.method === extracted.method,
+                    url: claimed.url === extracted.url,
+                    status: String(claimed.status) === String(extracted.status),
+                    host: claimed.host === extracted.host || claimed.host === certInfo.sni,
+                    protocol: claimed.protocol === extracted.protocol,
+                    requestBodySize: claimed.requestBodySize === extracted.requestBodySize,
+                    responseBodySize: claimed.responseBodySize === extracted.responseBodySize,
+                };
+
+                const allMatch = result.valid;
+
+                const card = document.createElement('div');
+                card.className = `transaction-card ${isValid ? 'valid' : 'invalid'}`;
+
+                // Build security proofs HTML
+                let proofsHtml = '';
+                if (result.details) {
+                    const proofs = [];
+
+                    if (result.details.certificateVerifySignature) {
+                        const cv = result.details.certificateVerifySignature;
+                        proofs.push({
+                            name: 'CertificateVerify Signature',
+                            verified: cv.verified,
+                            status: cv.verified ? 'Server proved possession of private key' : (cv.error || 'Signature verification failed'),
+                            docId: 'certificate-verify'
+                        });
+                    }
+
+                    if (result.details.serverKeyExchangeSignature) {
+                        const ske = result.details.serverKeyExchangeSignature;
+                        proofs.push({
+                            name: 'ServerKeyExchange Signature',
+                            verified: ske.verified,
+                            status: ske.verified ? 'Key exchange signed by server' : (ske.error || 'Signature verification failed'),
+                            docId: 'server-key-exchange'
+                        });
+                    }
+
+                    if (result.details.chainValidation) {
+                        const chain = result.details.chainValidation;
+                        proofs.push({
+                            name: 'Certificate Chain',
+                            verified: chain.valid,
+                            status: 'Signatures: ' + (chain.chainSignaturesValid ? 'Valid' : 'Invalid') + ', SNI: ' + (chain.sniVerified ? 'Verified' : 'Mismatch'),
+                            docId: 'certificate-chain'
+                        });
+                    }
+
+                    // Add transaction hash proof if available
+                    if (result.details.originalHash && result.details.reconstructedHash) {
+                        const hashMatch = result.details.originalHash === result.details.reconstructedHash;
+                        proofs.push({
+                            name: 'Transaction Hash',
+                            verified: hashMatch,
+                            status: hashMatch ? 'SHA-256 hashes match' : 'Hash mismatch - content differs',
+                            docId: 'transaction-hash',
+                            hash: result.details.reconstructedHash
+                        });
+                    }
+
+                    if (proofs.length > 0) {
+                        proofsHtml = '<div class="proof-grid">' +
+                            proofs.map(function(p) {
+                                return '<div class="proof-card ' + (p.verified ? 'verified' : 'failed') + '">' +
+                                    '<span class="proof-icon">' + (p.verified ? '&#9989;' : '&#10060;') + '</span>' +
+                                    '<div class="proof-details">' +
+                                        '<div class="proof-name">' + escapeHtml(p.name) + ' ' + createDocLink(p.docId, 'Docs') + '</div>' +
+                                        '<div class="proof-status">' + escapeHtml(p.status) + '</div>' +
+                                        (p.hash ? '<div class="proof-hash">' + escapeHtml(p.hash.substring(0, 16)) + '...</div>' : '') +
+                                    '</div>' +
+                                '</div>';
+                            }).join('') +
+                        '</div>';
+                    }
+                }
+
+                // Build certificate section
+                let certHtml = '';
+                if (certInfo.certificate_chain && certInfo.certificate_chain.length > 0) {
+                    // Parse all certificates
+                    const parsedCerts = certInfo.certificate_chain.map((cert, i) =>
+                        parseCertificateInfo(cert, i, certInfo.certificate_chain.length)
+                    );
+
+                    const certChainHtml = parsedCerts.map((cert, i) => `
+                        <div class="cert-item ${cert.type.toLowerCase()}">
+                            <div class="cert-type-badge ${cert.type.toLowerCase()}">${cert.type}</div>
+                            <div class="cert-subject">${escapeHtml(cert.subject)}</div>
+                            <div class="cert-detail">
+                                <span>Issuer</span>
+                                <span>${escapeHtml(cert.issuer)}</span>
+                            </div>
+                            <div class="cert-detail">
+                                <span>Valid</span>
+                                <span>${escapeHtml(cert.validFrom)} to ${escapeHtml(cert.validTo)}</span>
+                            </div>
+                            <div class="cert-detail">
+                                <span>Serial</span>
+                                <span>${escapeHtml(cert.serialNumber)}</span>
+                            </div>
+                            <div class="cert-detail">
+                                <span>Algorithm</span>
+                                <span>${escapeHtml(cert.algorithm)}</span>
+                            </div>
+                        </div>
+                    `).join('');
+
+                    const chainHashHtml = result.details?.hashes?.certificateChain?.computed ?
+                        '<div class="tls-info-item" style="margin-bottom: 1rem;">' +
+                            '<span class="tls-label">Chain Hash</span>' +
+                            '<span class="tls-value" style="font-size: 0.7rem; color: var(--accent-cyan);">' + escapeHtml(result.details.hashes.certificateChain.computed) + '</span>' +
+                        '</div>' : '';
+
+                    certHtml =
+                        '<div class="expandable-section">' +
+                            '<div class="section-header" onclick="this.classList.toggle(\'expanded\'); this.nextElementSibling.classList.toggle(\'expanded\')">' +
+                                '<span class="section-title">' +
+                                    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+                                        '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>' +
+                                        '<path d="M7 11V7a5 5 0 0 1 10 0v4"/>' +
+                                    '</svg>' +
+                                    'Certificate Chain (' + certInfo.certificate_chain.length + ' certificates) ' + createDocLink('certificate-chain', 'Docs') +
+                                '</span>' +
+                                '<span class="expand-icon">' +
+                                    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+                                        '<polyline points="6 9 12 15 18 9"/>' +
+                                    '</svg>' +
+                                '</span>' +
+                            '</div>' +
+                            '<div class="section-content">' +
+                                '<div class="tls-info-grid">' +
+                                    '<div class="tls-info-item">' +
+                                        '<span class="tls-label">SNI</span>' +
+                                        '<span class="tls-value">' + escapeHtml(certInfo.sni || 'N/A') + '</span>' +
+                                    '</div>' +
+                                    '<div class="tls-info-item">' +
+                                        '<span class="tls-label">TLS Version</span>' +
+                                        '<span class="tls-value">' + escapeHtml(certInfo.tls_version || 'N/A') + '</span>' +
+                                    '</div>' +
+                                    '<div class="tls-info-item">' +
+                                        '<span class="tls-label">ALPN</span>' +
+                                        '<span class="tls-value">' + escapeHtml(certInfo.alpn || 'N/A') + '</span>' +
+                                    '</div>' +
+                                    '<div class="tls-info-item">' +
+                                        '<span class="tls-label">Cipher Suite</span>' +
+                                        '<span class="tls-value truncated">' + escapeHtml(certInfo.cipher_suite || 'N/A') + '</span>' +
+                                    '</div>' +
+                                '</div>' +
+                                '<div style="margin-bottom: 1rem;">' + createDocLink('tls-parameters', 'What do these mean?') + '</div>' +
+                                chainHashHtml +
+                                '<div class="cert-chain-title">Certificate Chain</div>' +
+                                '<div class="cert-chain">' + certChainHtml + '</div>' +
+                            '</div>' +
+                        '</div>';
+                }
+
+                // Build hash section
+                let hashHtml = '';
+                if (result.details?.originalHash || result.details?.reconstructedHash) {
+                    const hashMatch = result.details.matched;
+                    hashHtml =
+                        '<div class="expandable-section">' +
+                            '<div class="section-header" onclick="this.classList.toggle(\'expanded\'); this.nextElementSibling.classList.toggle(\'expanded\')">' +
+                                '<span class="section-title">' +
+                                    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+                                        '<rect x="3" y="3" width="18" height="18" rx="2"/>' +
+                                        '<path d="M3 9h18M9 21V9"/>' +
+                                    '</svg>' +
+                                    'Transaction Hash Verification ' + createDocLink('transaction-hash', 'Docs') +
+                                    (hashMatch ? '<span style="color: var(--accent-green); margin-left: 0.5rem;">Match</span>' : '<span style="color: var(--accent-red); margin-left: 0.5rem;">Mismatch</span>') +
+                                '</span>' +
+                                '<span class="expand-icon">' +
+                                    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+                                        '<polyline points="6 9 12 15 18 9"/>' +
+                                    '</svg>' +
+                                '</span>' +
+                            '</div>' +
+                            '<div class="section-content">' +
+                                '<div class="comparison-row"><span class="row-label">Original Hash</span></div>' +
+                                '<div class="hash-display">' + escapeHtml(result.details.originalHash || 'N/A') + '</div>' +
+                                '<div class="comparison-row" style="margin-top: 1rem;"><span class="row-label">Reconstructed Hash</span></div>' +
+                                '<div class="hash-display">' + escapeHtml(result.details.reconstructedHash || 'N/A') + '</div>' +
+                            '</div>' +
+                        '</div>';
+                }
+
+                // Build differences section
+                let differencesHtml = '';
+                if (result.details?.differences && result.details.differences.length > 0) {
+                    differencesHtml = `
+                        <div class="expandable-section">
+                            <div class="section-header expanded" onclick="this.classList.toggle('expanded'); this.nextElementSibling.classList.toggle('expanded')">
+                                <span class="section-title" style="color: var(--accent-red);">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <circle cx="12" cy="12" r="10"/>
+                                        <line x1="12" y1="8" x2="12" y2="12"/>
+                                        <line x1="12" y1="16" x2="12.01" y2="16"/>
+                                    </svg>
+                                    Differences Found (${result.details.differences.length})
+                                </span>
+                                <span class="expand-icon">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <polyline points="6 9 12 15 18 9"/>
+                                    </svg>
+                                </span>
+                            </div>
+                            <div class="section-content expanded">
+                                <div class="differences-list">
+                                    ${result.details.differences.slice(0, 10).map(d => `
+                                        <div class="diff-item">
+                                            <span>&#10007;</span>
+                                            <span>${escapeHtml(d)}</span>
+                                        </div>
+                                    `).join('')}
+                                    ${result.details.differences.length > 10 ? `<div class="diff-item"><span>...</span><span>and ${result.details.differences.length - 10} more differences</span></div>` : ''}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                // Helper to build row value with match indicator
+                function matchValue(value, match) {
+                    var color = match ? 'var(--accent-green)' : 'var(--accent-red)';
+                    var icon = match ? '&#10003;' : '&#10007;';
+                    return '<span class="row-value" style="color: ' + color + '">' + value + ' ' + icon + '</span>';
+                }
+
+                // Build error banner if there's an error
+                let errorBannerHtml = '';
+                if (result.error || (result.details?.decryptionErrors && result.details.decryptionErrors.length > 0)) {
+                    const errorMsg = result.error || 'Decryption or parsing errors occurred';
+                    const decryptErrors = result.details?.decryptionErrors || [];
+                    const parseErrors = result.details?.parseErrors || [];
+
+                    let detailsHtml = '';
+                    if (decryptErrors.length > 0 || parseErrors.length > 0) {
+                        const allErrors = [...decryptErrors.slice(0, 3), ...parseErrors.slice(0, 3)];
+                        detailsHtml = '<div class="error-details">' +
+                            allErrors.map(e => '<div>' + escapeHtml(e) + '</div>').join('') +
+                            (decryptErrors.length + parseErrors.length > 6 ? '<div>... and more</div>' : '') +
+                            '</div>';
+                    }
+
+                    errorBannerHtml =
+                        '<div class="error-banner">' +
+                            '<span class="error-icon">&#9888;</span>' +
+                            '<div class="error-content">' +
+                                '<div class="error-title">Validation Error</div>' +
+                                '<div class="error-message">' + escapeHtml(errorMsg) + '</div>' +
+                                detailsHtml +
+                            '</div>' +
+                        '</div>';
+                }
+
+                card.innerHTML =
+                    '<div class="card-header ' + (autoExpand ? 'expanded' : '') + '" onclick="this.classList.toggle(\'expanded\'); this.nextElementSibling.classList.toggle(\'expanded\')">' +
+                        '<div class="card-title">' +
+                            (autoExpand ? '' : '<span class="card-index">#' + (index + 1) + '</span>') +
+                            '<span class="card-method">' + escapeHtml(claimed.method) + '</span>' +
+                            '<span class="card-url">' + escapeHtml(truncate(claimed.url, 60)) + '</span>' +
+                        '</div>' +
+                        '<div class="card-badges">' +
+                            '<span class="badge badge-level">' + escapeHtml(level) + '</span>' +
+                            '<span class="badge ' + (isValid ? 'badge-valid' : 'badge-invalid') + '">' + (isValid ? 'Valid' : 'Invalid') + '</span>' +
+                            (autoExpand ? '' : '<span class="expand-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>') +
+                        '</div>' +
+                    '</div>' +
+                    '<div class="card-body ' + (autoExpand ? 'expanded' : '') + '">' +
+                        '<div style="margin-bottom: 1rem; text-align: center;">' + createDocLink('how-it-works', 'How does this validation work?') + '</div>' +
+                        '<div class="comparison-grid">' +
+                            '<div class="comparison-column">' +
+                                '<div class="column-header">' +
+                                    '<span class="column-title claimed">' +
+                                        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>' +
+                                        'Claimed (Transaction)' +
+                                    '</span>' +
+                                    createDocLink('claimed-values', 'Docs') +
+                                '</div>' +
+                                '<div class="column-content">' +
+                                    '<div class="comparison-row"><span class="row-label">Method</span><span class="row-value">' + escapeHtml(claimed.method) + '</span></div>' +
+                                    '<div class="comparison-row"><span class="row-label">Host</span><span class="row-value">' + escapeHtml(claimed.host) + '</span></div>' +
+                                    '<div class="comparison-row"><span class="row-label">Status</span><span class="row-value">' + escapeHtml(claimed.status) + '</span></div>' +
+                                    '<div class="comparison-row"><span class="row-label">Protocol</span><span class="row-value">' + escapeHtml(claimed.protocol) + '</span></div>' +
+                                    '<div class="comparison-row"><span class="row-label">Request Body</span><span class="row-value">' + claimed.requestBodySize + ' bytes</span></div>' +
+                                    '<div class="comparison-row"><span class="row-label">Response Body</span><span class="row-value">' + claimed.responseBodySize + ' bytes</span></div>' +
+                                '</div>' +
+                            '</div>' +
+                            '<div class="comparison-column">' +
+                                '<div class="column-header">' +
+                                    '<span class="column-title extracted">' +
+                                        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>' +
+                                        'Extracted (Raw Packets)' +
+                                    '</span>' +
+                                    createDocLink('extracted-values', 'Docs') +
+                                '</div>' +
+                                '<div class="column-content">' +
+                                    '<div class="comparison-row"><span class="row-label">Method</span>' + matchValue(escapeHtml(extracted.method), matches.method) + '</div>' +
+                                    '<div class="comparison-row"><span class="row-label">Host (SNI)</span>' + matchValue(escapeHtml(certInfo.sni || extracted.host), matches.host) + '</div>' +
+                                    '<div class="comparison-row"><span class="row-label">Status</span>' + matchValue(escapeHtml(extracted.status), matches.status) + '</div>' +
+                                    '<div class="comparison-row"><span class="row-label">Protocol</span>' + matchValue(escapeHtml(extracted.protocol), matches.protocol) + '</div>' +
+                                    '<div class="comparison-row"><span class="row-label">Request Body</span>' + matchValue(extracted.requestBodySize + ' bytes', matches.requestBodySize) + '</div>' +
+                                    '<div class="comparison-row"><span class="row-label">Response Body</span>' + matchValue(extracted.responseBodySize + ' bytes', matches.responseBodySize) + '</div>' +
+                                '</div>' +
+                            '</div>' +
+                        '</div>' +
+                        '<div class="match-indicator ' + (allMatch ? 'match' : 'mismatch') + '">' +
+                            (allMatch
+                                ? '<span>&#9989;</span> Transaction cryptographically verified - data extracted from encrypted TLS records matches the claimed transaction'
+                                : '<span>&#10060;</span> Verification failed - extracted values differ from claimed transaction (see details below)') +
+                        '</div>' +
+                        errorBannerHtml +
+                        proofsHtml +
+                        certHtml +
+                        hashHtml +
+                        differencesHtml +
+                    '</div>';
+
+                return card;
+            }
+
+            function renderWebSocketCard(msg, result, index, autoExpand = false) {
+                const evidence = msg.forensic_evidence || {};
+                const certInfo = evidence.certificate_info || {};
+
+                const isValid = result.valid;
+                const level = result.level || 'failed';
+
+                // Extract host from URL
+                let host = 'unknown';
+                try {
+                    host = new URL(msg.url || 'wss://unknown').hostname;
+                } catch (e) {
+                    host = msg.url || 'unknown';
+                }
+
+                // Format direction
+                const direction = msg.direction === 'ServerToClient' ? 'Server → Client' :
+                                  msg.direction === 'ClientToServer' ? 'Client → Server' : msg.direction || 'Unknown';
+
+                // Get payload size
+                const payloadSize = msg.text ? msg.text.length :
+                                    msg.binary ? atob(msg.binary).length : 0;
+
+                const card = document.createElement('div');
+                card.className = `transaction-card ${isValid ? 'valid' : 'invalid'}`;
+
+                // Build security proofs HTML (same as HTTP)
+                let proofsHtml = '';
+                if (result.details) {
+                    const proofs = [];
+
+                    if (result.details.certificateVerifySignature) {
+                        const cv = result.details.certificateVerifySignature;
+                        proofs.push({
+                            name: 'CertificateVerify Signature',
+                            verified: cv.verified,
+                            status: cv.verified ? 'Server proved possession of private key' : (cv.error || 'Signature verification failed'),
+                            docId: 'certificate-verify'
+                        });
+                    }
+
+                    if (result.details.serverKeyExchangeSignature) {
+                        const ske = result.details.serverKeyExchangeSignature;
+                        proofs.push({
+                            name: 'ServerKeyExchange Signature',
+                            verified: ske.verified,
+                            status: ske.verified ? 'Key exchange signed by server' : (ske.error || 'Signature verification failed'),
+                            docId: 'server-key-exchange'
+                        });
+                    }
+
+                    if (result.details.chainValidation) {
+                        const chain = result.details.chainValidation;
+                        proofs.push({
+                            name: 'Certificate Chain',
+                            verified: chain.valid,
+                            status: 'Signatures: ' + (chain.chainSignaturesValid ? 'Valid' : 'Invalid') + ', SNI: ' + (chain.sniVerified ? 'Verified' : 'Mismatch'),
+                            docId: 'certificate-chain'
+                        });
+                    }
+
+                    if (result.details.originalHash && result.details.reconstructedHash) {
+                        const hashMatch = result.details.originalHash === result.details.reconstructedHash;
+                        proofs.push({
+                            name: 'Message Hash',
+                            verified: hashMatch,
+                            status: hashMatch ? 'SHA-256 hashes match' : 'Hash mismatch - content differs',
+                            docId: 'transaction-hash',
+                            hash: result.details.reconstructedHash
+                        });
+                    }
+
+                    if (proofs.length > 0) {
+                        proofsHtml = '<div class="proof-grid">' +
+                            proofs.map(function(p) {
+                                return '<div class="proof-card ' + (p.verified ? 'verified' : 'failed') + '">' +
+                                    '<span class="proof-icon">' + (p.verified ? '&#9989;' : '&#10060;') + '</span>' +
+                                    '<div class="proof-details">' +
+                                        '<div class="proof-name">' + escapeHtml(p.name) + ' ' + createDocLink(p.docId, 'Docs') + '</div>' +
+                                        '<div class="proof-status">' + escapeHtml(p.status) + '</div>' +
+                                        (p.hash ? '<div class="proof-hash">' + escapeHtml(p.hash.substring(0, 16)) + '...</div>' : '') +
+                                    '</div>' +
+                                '</div>';
+                            }).join('') +
+                        '</div>';
+                    }
+                }
+
+                // Build certificate section (same as HTTP)
+                let certHtml = '';
+                if (certInfo.certificate_chain && certInfo.certificate_chain.length > 0) {
+                    const parsedCerts = certInfo.certificate_chain.map((cert, i) =>
+                        parseCertificateInfo(cert, i, certInfo.certificate_chain.length)
+                    );
+
+                    const certChainHtml = parsedCerts.map((cert, i) => `
+                        <div class="cert-item ${cert.type.toLowerCase()}">
+                            <div class="cert-type-badge ${cert.type.toLowerCase()}">${cert.type}</div>
+                            <div class="cert-subject">${escapeHtml(cert.subject)}</div>
+                            <div class="cert-detail">
+                                <span>Issuer</span>
+                                <span>${escapeHtml(cert.issuer)}</span>
+                            </div>
+                            <div class="cert-detail">
+                                <span>Valid</span>
+                                <span>${escapeHtml(cert.validFrom)} to ${escapeHtml(cert.validTo)}</span>
+                            </div>
+                            <div class="cert-detail">
+                                <span>Serial</span>
+                                <span>${escapeHtml(cert.serialNumber)}</span>
+                            </div>
+                            <div class="cert-detail">
+                                <span>Algorithm</span>
+                                <span>${escapeHtml(cert.algorithm)}</span>
+                            </div>
+                        </div>
+                    `).join('');
+
+                    certHtml =
+                        '<div class="expandable-section">' +
+                            '<div class="section-header" onclick="this.classList.toggle(\'expanded\'); this.nextElementSibling.classList.toggle(\'expanded\')">' +
+                                '<span class="section-title">' +
+                                    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+                                        '<rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>' +
+                                        '<path d="M7 11V7a5 5 0 0 1 10 0v4"/>' +
+                                    '</svg>' +
+                                    'Certificate Chain (' + certInfo.certificate_chain.length + ' certificates) ' + createDocLink('certificate-chain', 'Docs') +
+                                '</span>' +
+                                '<span class="expand-icon">' +
+                                    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+                                        '<polyline points="6 9 12 15 18 9"/>' +
+                                    '</svg>' +
+                                '</span>' +
+                            '</div>' +
+                            '<div class="section-content">' +
+                                '<div class="tls-info-grid">' +
+                                    '<div class="tls-info-item">' +
+                                        '<span class="tls-label">SNI</span>' +
+                                        '<span class="tls-value">' + escapeHtml(certInfo.sni || 'N/A') + '</span>' +
+                                    '</div>' +
+                                    '<div class="tls-info-item">' +
+                                        '<span class="tls-label">TLS Version</span>' +
+                                        '<span class="tls-value">' + escapeHtml(certInfo.tls_version || 'N/A') + '</span>' +
+                                    '</div>' +
+                                    '<div class="tls-info-item">' +
+                                        '<span class="tls-label">ALPN</span>' +
+                                        '<span class="tls-value">' + escapeHtml(certInfo.alpn || 'N/A') + '</span>' +
+                                    '</div>' +
+                                    '<div class="tls-info-item">' +
+                                        '<span class="tls-label">Cipher Suite</span>' +
+                                        '<span class="tls-value truncated">' + escapeHtml(certInfo.cipher_suite || 'N/A') + '</span>' +
+                                    '</div>' +
+                                '</div>' +
+                                '<div style="margin-bottom: 1rem;">' + createDocLink('tls-parameters', 'What do these mean?') + '</div>' +
+                                '<div class="cert-chain-title">Certificate Chain</div>' +
+                                '<div class="cert-chain">' + certChainHtml + '</div>' +
+                            '</div>' +
+                        '</div>';
+                }
+
+                // Build error banner if there's an error
+                let errorBannerHtml = '';
+                if (result.error) {
+                    errorBannerHtml =
+                        '<div class="error-banner">' +
+                            '<span class="error-icon">&#9888;</span>' +
+                            '<div class="error-content">' +
+                                '<div class="error-title">Validation Error</div>' +
+                                '<div class="error-message">' + escapeHtml(result.error) + '</div>' +
+                            '</div>' +
+                        '</div>';
+                }
+
+                // Build payload preview
+                let payloadPreview = '';
+                if (msg.text) {
+                    const preview = msg.text.length > 200 ? msg.text.substring(0, 200) + '...' : msg.text;
+                    payloadPreview =
+                        '<div class="expandable-section">' +
+                            '<div class="section-header" onclick="this.classList.toggle(\'expanded\'); this.nextElementSibling.classList.toggle(\'expanded\')">' +
+                                '<span class="section-title">' +
+                                    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+                                        '<path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>' +
+                                    '</svg>' +
+                                    'Message Payload (' + msg.text.length + ' chars)' +
+                                '</span>' +
+                                '<span class="expand-icon">' +
+                                    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+                                        '<polyline points="6 9 12 15 18 9"/>' +
+                                    '</svg>' +
+                                '</span>' +
+                            '</div>' +
+                            '<div class="section-content">' +
+                                '<pre style="background: var(--bg-tertiary); padding: 1rem; border-radius: 0.5rem; overflow-x: auto; white-space: pre-wrap; word-break: break-all; font-size: 0.8rem; color: var(--text-secondary);">' + escapeHtml(msg.text) + '</pre>' +
+                            '</div>' +
+                        '</div>';
+                } else if (msg.binary) {
+                    payloadPreview =
+                        '<div class="expandable-section">' +
+                            '<div class="section-header">' +
+                                '<span class="section-title">' +
+                                    '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">' +
+                                        '<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>' +
+                                    '</svg>' +
+                                    'Binary Payload (' + payloadSize + ' bytes)' +
+                                '</span>' +
+                            '</div>' +
+                        '</div>';
+                }
+
+                card.innerHTML =
+                    '<div class="card-header ' + (autoExpand ? 'expanded' : '') + '" onclick="this.classList.toggle(\'expanded\'); this.nextElementSibling.classList.toggle(\'expanded\')">' +
+                        '<div class="card-title">' +
+                            (autoExpand ? '' : '<span class="card-index">#' + (index + 1) + '</span>') +
+                            '<span class="card-method" style="background: var(--accent-purple);">WS</span>' +
+                            '<span class="card-url">' + escapeHtml(truncate(host, 40)) + '</span>' +
+                            '<span class="card-method" style="background: var(--bg-tertiary); color: var(--text-secondary); font-size: 0.7rem;">' + escapeHtml(msg.message_type || 'Unknown') + '</span>' +
+                        '</div>' +
+                        '<div class="card-badges">' +
+                            '<span class="badge badge-level">' + escapeHtml(level) + '</span>' +
+                            '<span class="badge ' + (isValid ? 'badge-valid' : 'badge-invalid') + '">' + (isValid ? 'Valid' : 'Invalid') + '</span>' +
+                            (autoExpand ? '' : '<span class="expand-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg></span>') +
+                        '</div>' +
+                    '</div>' +
+                    '<div class="card-body ' + (autoExpand ? 'expanded' : '') + '">' +
+                        '<div style="margin-bottom: 1rem; text-align: center;">' + createDocLink('how-it-works', 'How does this validation work?') + '</div>' +
+                        '<div class="comparison-grid" style="grid-template-columns: 1fr;">' +
+                            '<div class="comparison-column">' +
+                                '<div class="column-header">' +
+                                    '<span class="column-title claimed">' +
+                                        '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>' +
+                                        'WebSocket Message' +
+                                    '</span>' +
+                                '</div>' +
+                                '<div class="column-content">' +
+                                    '<div class="comparison-row"><span class="row-label">Host</span><span class="row-value">' + escapeHtml(host) + '</span></div>' +
+                                    '<div class="comparison-row"><span class="row-label">URL</span><span class="row-value" style="font-size: 0.75rem;">' + escapeHtml(truncate(msg.url || 'N/A', 50)) + '</span></div>' +
+                                    '<div class="comparison-row"><span class="row-label">Type</span><span class="row-value">' + escapeHtml(msg.message_type || 'Unknown') + '</span></div>' +
+                                    '<div class="comparison-row"><span class="row-label">Direction</span><span class="row-value">' + escapeHtml(direction) + '</span></div>' +
+                                    '<div class="comparison-row"><span class="row-label">Payload Size</span><span class="row-value">' + payloadSize + ' ' + (msg.text ? 'chars' : 'bytes') + '</span></div>' +
+                                '</div>' +
+                            '</div>' +
+                        '</div>' +
+                        '<div class="match-indicator ' + (isValid ? 'match' : 'mismatch') + '">' +
+                            (isValid
+                                ? '<span>&#9989;</span> WebSocket message cryptographically verified - extracted from encrypted TLS records'
+                                : '<span>&#10060;</span> Verification failed (see details below)') +
+                        '</div>' +
+                        errorBannerHtml +
+                        proofsHtml +
+                        certHtml +
+                        payloadPreview +
+                    '</div>';
+
+                return card;
+            }
+
+            async function validateTransactions(transactions) {
+                if (isValidating) return;
+                isValidating = true;
+
+                const isSingle = transactions.length === 1;
+
+                uploadSection.classList.add('hidden');
+                resultsSection.classList.remove('hidden');
+                resultsContainer.innerHTML = '';
+
+                // Hide progress and summary for single transactions
+                if (isSingle) {
+                    validationSection.classList.add('hidden');
+                    summaryBanner.classList.add('hidden');
+                } else {
+                    validationSection.classList.remove('hidden');
+                    summaryBanner.classList.remove('hidden');
+                }
+
+                const stats = { total: transactions.length, valid: 0, full: 0, failed: 0 };
+                updateStats(stats);
+
+                for (let i = 0; i < transactions.length; i++) {
+                    const record = transactions[i];
+                    const tx = record.data || record;
+
+                    if (!isSingle && (i % 10 === 0 || i === transactions.length - 1)) {
+                        showProgress(`Validating transaction ${i + 1}/${transactions.length}`, i + 1, transactions.length);
+                    }
+
+                    try {
+                        const evidence = tx.forensic_evidence;
+                        let result;
+
+                        if (!evidence) {
+                            // Create error result for missing evidence
+                            result = {
+                                valid: false,
+                                level: 'none',
+                                error: 'No forensic evidence in transaction',
+                                details: {}
+                            };
+                        } else {
+                            result = await validate(record, { skipCtLookup: true, verbose: true });
+                        }
+
+                        if (result.valid) {
+                            stats.valid++;
+                            if (result.level === 'full') stats.full++;
+                        } else {
+                            stats.failed++;
+                        }
+
+                        // Show first 50 results to avoid DOM overload
+                        if (i < 50) {
+                            // Use appropriate renderer based on record type
+                            const card = record.type === 'web_socket_message'
+                                ? renderWebSocketCard(tx, result, i, isSingle)
+                                : renderTransactionCard(tx, result, i, isSingle);
+                            resultsContainer.appendChild(card);
+                        }
+
+                        updateStats(stats);
+                    } catch (error) {
+                        console.error(`Error validating transaction ${i + 1}:`, error);
+                        stats.failed++;
+
+                        // Still render the card with the error
+                        if (i < 50) {
+                            const errorResult = {
+                                valid: false,
+                                level: 'none',
+                                error: error.message || 'Unknown error during validation',
+                                details: {}
+                            };
+                            // Use appropriate renderer based on record type
+                            const card = record.type === 'web_socket_message'
+                                ? renderWebSocketCard(tx, errorResult, i, isSingle)
+                                : renderTransactionCard(tx, errorResult, i, isSingle);
+                            resultsContainer.appendChild(card);
+                        }
+
+                        updateStats(stats);
+                    }
+
+                    // Yield to browser
+                    if (i % 50 === 0) {
+                        await new Promise(r => setTimeout(r, 0));
+                    }
+                }
+
+                showProgress('Validation complete', transactions.length, transactions.length);
+                isValidating = false;
+            }
+
+            // File input handler
+            fileInput.addEventListener('change', async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+
+                const text = await file.text();
+                const lines = text.trim().split('\n');
+                const transactions = lines.map(line => JSON.parse(line));
+                await validateTransactions(transactions);
+            });
+
+            // Drop zone handlers
+            dropZone.addEventListener('click', () => fileInput.click());
+
+            dropZone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                dropZone.classList.add('drag-over');
+            });
+
+            dropZone.addEventListener('dragleave', () => {
+                dropZone.classList.remove('drag-over');
+            });
+
+            dropZone.addEventListener('drop', async (e) => {
+                e.preventDefault();
+                dropZone.classList.remove('drag-over');
+
+                const file = e.dataTransfer.files[0];
+                if (!file) return;
+
+                const text = await file.text();
+                const lines = text.trim().split('\n');
+                const transactions = lines.map(line => JSON.parse(line));
+                await validateTransactions(transactions);
+            });
+
+            // Paste validation
+            validatePasteBtn.addEventListener('click', async () => {
+                const text = pasteInput.value.trim();
+                if (!text) return;
+
+                try {
+                    // Try to parse as single JSON or JSONL
+                    let transactions;
+                    if (text.startsWith('[')) {
+                        transactions = JSON.parse(text);
+                    } else if (text.includes('\n')) {
+                        transactions = text.split('\n').filter(l => l.trim()).map(l => JSON.parse(l));
+                    } else {
+                        transactions = [JSON.parse(text)];
+                    }
+                    await validateTransactions(transactions);
+                } catch (err) {
+                    alert(`Failed to parse JSON: ${err.message}`);
+                }
+            });
+
+            // Reset button
+            resetBtn.addEventListener('click', () => {
+                uploadSection.classList.remove('hidden');
+                validationSection.classList.add('hidden');
+                resultsSection.classList.add('hidden');
+                resultsContainer.innerHTML = '';
+                pasteInput.value = '';
+                fileInput.value = '';
+                progressBar.style.width = '0%';
+                statusText.textContent = '';
+                updateStats({ total: 0, valid: 0, full: 0, failed: 0 });
+            });
+
+            console.log('Shorenet Validator initialized');
+        })();
+    </script>
+</body>
+</html>

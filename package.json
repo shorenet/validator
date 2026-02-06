@@ -1,0 +1,31 @@
+{
+  "name": "@shorenet/validator",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Browser-based forensic evidence validator for HTTP and WebSocket transactions",
+  "main": "src/index.js",
+  "scripts": {
+    "serve": "npx serve .",
+    "test": "echo \"No tests configured\" && exit 0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shorenet/validator.git"
+  },
+  "keywords": [
+    "forensic",
+    "validator",
+    "http",
+    "websocket",
+    "tls",
+    "certificate"
+  ],
+  "author": "Shorenet",
+  "license": "MIT",
+  "dependencies": {
+    "@noble/ed25519": "^2.1.0",
+    "@peculiar/x509": "^1.9.7",
+    "brotli-wasm": "^3.0.1",
+    "pako": "^2.1.0"
+  }
+}
